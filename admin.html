@@ -1,0 +1,148 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Admin</title>
+<link rel="stylesheet" href="style.css">
+<style>
+.wrap{max-width:52rem}
+.tabs{display:flex;gap:1.6rem;margin-bottom:2.5rem;font-family:var(--sans);font-size:.78rem;letter-spacing:.14em;text-transform:uppercase}
+.tabs button{all:unset;cursor:pointer;color:var(--mute)}
+.tabs button.on{color:var(--fg);border-bottom:1px solid var(--accent)}
+label{display:block;font-family:var(--sans);font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;color:var(--mute);margin:1.2rem 0 .4rem}
+input,textarea{width:100%;background:transparent;color:var(--fg);border:1px solid var(--line);padding:.6rem .7rem;font:inherit;font-size:.95rem}
+textarea{min-height:26rem;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85rem;line-height:1.6;resize:vertical}
+.row{display:grid;grid-template-columns:2fr 1.2fr 1fr;gap:1rem}
+.btn{font-family:var(--sans);font-size:.75rem;letter-spacing:.12em;text-transform:uppercase;background:var(--fg);color:var(--bg);border:0;padding:.7rem 1.2rem;cursor:pointer;margin:1.2rem .6rem 0 0}
+.btn.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+#status{font-family:var(--sans);font-size:.8rem;color:var(--mute);margin-top:1rem;min-height:1.2rem}
+#preview{border:1px solid var(--line);padding:1rem 1.4rem;margin-top:1rem;display:none}
+.hide{display:none}
+</style></head><body><div class="wrap">
+<header><a href="index.html">← Site</a><span>Admin</span></header>
+<div class="tabs"><button data-t="posts" class="on">Posts</button><button data-t="files">Site files</button><button data-t="settings">Settings</button></div>
+
+<section id="posts">
+  <ul class="list" id="postlist"></ul>
+  <h2 id="edhead">New post</h2>
+  <div class="row">
+    <div><label>Title</label><input id="title"></div>
+    <div><label>Slug</label><input id="slug" placeholder="auto from title"></div>
+    <div><label>Date</label><input id="date" type="date"></div>
+  </div>
+  <label>Body (markdown)</label><textarea id="body"></textarea>
+  <div id="preview"></div>
+  <button class="btn" id="publish">Publish</button>
+  <button class="btn ghost" id="prev">Preview</button>
+  <button class="btn ghost" id="reset">New post</button>
+  <button class="btn ghost hide" id="del">Delete</button>
+</section>
+
+<section id="files" class="hide">
+  <label>File path</label>
+  <input id="fpath" list="common" placeholder="index.html">
+  <datalist id="common"><option>index.html</option><option>about.html</option><option>works.json</option><option>blog.html</option><option>post.html</option><option>style.css</option><option>site.js</option></datalist>
+  <button class="btn ghost" id="fload">Load</button>
+  <label>Contents</label><textarea id="fbody"></textarea>
+  <button class="btn" id="fsave">Save &amp; publish</button>
+</section>
+
+<section id="settings" class="hide">
+  <p class="lede">Stored only in this browser. Nothing here is sent anywhere except directly to GitHub.</p>
+  <label>Repository (owner/name)</label><input id="repo" placeholder="yourname/writing-site">
+  <label>Branch</label><input id="branch" value="main">
+  <label>GitHub token</label><input id="token" type="password" placeholder="fine-grained token, Contents: read &amp; write">
+  <button class="btn" id="savecfg">Save settings</button>
+  <button class="btn ghost" id="forget">Forget token</button>
+</section>
+<div id="status"></div>
+</div>
+<script src="site.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const cfg=()=>({repo:localStorage.repo||"",branch:localStorage.branch||"main",token:localStorage.token||""});
+const say=(m,bad)=>{$("status").textContent=m;$("status").style.color=bad?"var(--accent)":"var(--mute)"};
+const b64=s=>{let t="";new TextEncoder().encode(s).forEach(x=>t+=String.fromCharCode(x));return btoa(t)};
+const unb64=s=>new TextDecoder().decode(Uint8Array.from(atob(s.replace(/\n/g,"")),c=>c.charCodeAt(0)));
+
+async function gh(path,method="GET",body){
+  const c=cfg();
+  if(!c.repo||!c.token)throw new Error("Add your repository and token in Settings first.");
+  const url=`https://api.github.com/repos/${c.repo}/contents/${path}`+(method==="GET"?`?ref=${c.branch}`:"");
+  const r=await fetch(url,{method,headers:{Authorization:`Bearer ${c.token}`,Accept:"application/vnd.github+json"},body:body&&JSON.stringify({...body,branch:c.branch})});
+  if(r.status===404&&method==="GET")return null;
+  if(!r.ok)throw new Error(`GitHub said ${r.status}: ${(await r.json().catch(()=>({}))).message||"error"}`);
+  return r.json();
+}
+async function getFile(p){const f=await gh(p);return f&&{text:unb64(f.content),sha:f.sha}}
+async function putFile(p,text,msg){const old=await gh(p);return gh(p,"PUT",{message:msg,content:b64(text),...(old?{sha:old.sha}:{})})}
+async function readIndex(){const f=await getFile("posts/posts.json");return f?JSON.parse(f.text):[]}
+const writeIndex=l=>putFile("posts/posts.json",JSON.stringify(l,null,2)+"\n","Update post index");
+
+// Tabs
+document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll(".tabs button").forEach(x=>x.classList.toggle("on",x===b));
+  ["posts","files","settings"].forEach(t=>$(t).classList.toggle("hide",t!==b.dataset.t));
+});
+
+// Settings
+$("repo").value=cfg().repo;$("branch").value=cfg().branch;$("token").value=cfg().token;
+$("savecfg").onclick=()=>{localStorage.repo=$("repo").value.trim();localStorage.branch=$("branch").value.trim()||"main";localStorage.token=$("token").value.trim();say("Settings saved.");loadList()};
+$("forget").onclick=()=>{delete localStorage.token;$("token").value="";say("Token removed from this browser.")};
+
+// Posts
+let editing=null;
+const slugify=s=>s.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");
+function resetEditor(){editing=null;$("title").value=$("slug").value=$("body").value="";$("date").value=new Date().toISOString().slice(0,10);$("edhead").textContent="New post";$("del").classList.add("hide");$("preview").style.display="none"}
+async function loadList(){
+  const ul=$("postlist");ul.innerHTML="";
+  try{
+    (await readIndex()).sort((a,b)=>b.date.localeCompare(a.date)).forEach(p=>{
+      const li=document.createElement("li"),a=document.createElement("a"),m=document.createElement("span");
+      a.href="#";a.textContent=p.title;m.className="meta";m.textContent=p.date;
+      a.onclick=e=>{e.preventDefault();openPost(p)};
+      li.append(a,m);ul.append(li);
+    });
+  }catch(e){say(e.message,1)}
+}
+async function openPost(p){
+  say("Loading…");
+  const f=await getFile(`posts/${p.slug}.md`);
+  if(!f)return say("Post file not found.",1);
+  editing=p.slug;$("title").value=p.title;$("slug").value=p.slug;$("date").value=p.date;$("body").value=f.text;
+  $("edhead").textContent="Editing: "+p.title;$("del").classList.remove("hide");say("");scrollTo(0,document.body.scrollHeight);
+}
+$("prev").onclick=()=>{const p=$("preview");p.innerHTML=md($("body").value||" ");p.style.display="block"};
+$("reset").onclick=resetEditor;
+$("publish").onclick=async()=>{
+  try{
+    const title=$("title").value.trim(),slug=slugify($("slug").value||title),date=$("date").value;
+    if(!title||!slug||!date||!$("body").value.trim())return say("Title, date and body are required.",1);
+    say("Publishing…");
+    await putFile(`posts/${slug}.md`,$("body").value.replace(/\s+$/,"")+"\n",`Post: ${title}`);
+    let list=(await readIndex()).filter(p=>p.slug!==slug&&p.slug!==editing);
+    list.push({slug,title,date,excerpt:excerptOf($("body").value)});await writeIndex(list);
+    if(editing&&editing!==slug){const o=await gh(`posts/${editing}.md`);if(o)await gh(`posts/${editing}.md`,"DELETE",{message:"Rename post",sha:o.sha})}
+    editing=slug;say("Published. The live site updates in a minute or two.");loadList();
+  }catch(e){say(e.message,1)}
+};
+$("del").onclick=async()=>{
+  if(!editing||!confirm("Delete this post permanently?"))return;
+  try{
+    const o=await gh(`posts/${editing}.md`);if(o)await gh(`posts/${editing}.md`,"DELETE",{message:`Delete post: ${editing}`,sha:o.sha});
+    await writeIndex((await readIndex()).filter(p=>p.slug!==editing));
+    say("Deleted.");resetEditor();loadList();
+  }catch(e){say(e.message,1)}
+};
+
+// Site files
+$("fload").onclick=async()=>{
+  try{const p=$("fpath").value.trim();if(!p)return;const f=await getFile(p);
+    if(!f)return say("No such file. Saving will create it.",1);$("fbody").value=f.text;say("Loaded "+p)}catch(e){say(e.message,1)}
+};
+$("fsave").onclick=async()=>{
+  try{const p=$("fpath").value.trim();if(!p)return say("Enter a file path.",1);
+    if(!confirm(`Publish changes to ${p}? This goes live.`))return;
+    await putFile(p,$("fbody").value,`Edit ${p}`);say("Saved. The live site updates in a minute or two.")}catch(e){say(e.message,1)}
+};
+resetEditor();loadList();
+</script></body></html>
